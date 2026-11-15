@@ -1,8 +1,12 @@
 # Sillage
 
+**Français** · [English](README.en.md)
+
 **La carte des flux du Query Store.**
 
 Démo en ligne : <https://cchopin.github.io/sillage/> (jeu de démonstration fictif, aucune donnée réelle).
+
+![La carte Sillage sur le jeu de démonstration](docs/capture.png)
 
 Une carte interactive des flux de données d'une instance SQL Server, construite uniquement à partir du Query Store. Le principe : une extraction SQL produit un fichier JSON, la page HTML lit ce fichier et construit la carte toute seule. Rejouable sur n'importe quelle instance.
 
@@ -10,14 +14,14 @@ Une carte interactive des flux de données d'une instance SQL Server, construite
 
 Ce qui a été vérifié, et dans quelles limites :
 
-- **Chaîne complète** : exécutée de bout en bout sur une seule instance de test, SQL Server 2022 (16.0, CU28) sous Linux dans un conteneur, avec trois petites bases fictives et quelques dizaines d'exécutions. Le lanceur a produit le fichier, la page l'a lu et a affiché la carte attendue : flux entre bases, procédure appelante, attente de verrou, sessions ouvertes.
-- **Extraction (`sql/extraction-query-store.sql`)** : sur cette instance, essayée aussi par `sqlcmd`, avec `@Bases`, `@TopRequetes = 1`, `@TexteMax` à 0 et au-delà de 4000, et avec les deux replis du fuseau horaire.
+- **Chaîne complète** : exécutée de bout en bout sur des instances de test uniquement, SQL Server 2022 (16.0), 2019 (15.0) et 2017 (14.0) sous Linux dans des conteneurs, avec trois petites bases fictives et quelques dizaines d'exécutions. Le lanceur a produit le fichier, et la carte a montré ce qui était attendu : flux entre bases, procédure appelante, attente de verrou.
+- **Extraction (`sql/extraction-query-store.sql`)** : sur l'instance 2022, essayée aussi par `sqlcmd`, avec `@Bases`, `@TopRequetes = 1`, `@TexteMax` à 0 et au-delà de 4000, et avec les deux replis du fuseau horaire.
 - **Lanceur (`scripts/extraire.ps1`)** : essayé sous PowerShell 7 sur macOS, en authentification SQL.
-- **Front (`index.html`)** : vérifié sur le jeu de démonstration et sur le fichier de cette instance de test.
+- **Front (`index.html`)** : vérifié sur le jeu de démonstration et sur le fichier de l'instance de test 2022.
 
 Ce qui n'a pas été vérifié :
 
-- SQL Server 2016, 2017 et 2019, Azure SQL, et SQL Server sous Windows ;
+- SQL Server 2016, Azure SQL, et SQL Server sous Windows ;
 - une instance de production : volumétrie réelle, durée de l'extraction, plans complexes, nombreuses bases, groupes de disponibilité ;
 - un historique de plusieurs jours, et donc un changement d'heure dans la période ;
 - Windows PowerShell 5.1 et l'authentification Windows.
@@ -73,7 +77,12 @@ En tête de `sql/extraction-query-store.sql` :
 | `@TailleMinMo` | 0 | Ignore les bases plus petites que ce seuil |
 | `@Bases` | vide | Liste de bases séparées par des virgules, vide pour toutes. Les espaces autour des virgules sont ignorés |
 
-## Réglages du front
+## Utiliser la carte
+
+- **Recherche** : le champ en haut de la carte retrouve une base, une table ou une procédure, ouvre la bonne vue et sélectionne le noeud.
+- **Export PNG** : « Exporter en PNG » enregistre la carte telle qu'elle est affichée, avec le créneau et la mesure en légende. L'image contient des noms d'objets : voir Confidentialité.
+- **Frise horaire** : chaque case est un créneau jour de semaine et heure. Sa légende donne l'échelle de couleur. Un clic sur une case affiche ce créneau sur la carte, « Rejouer la semaine » fait défiler la semaine.
+- Les noeuds se déplacent à la souris. Un double-clic sur une base ouvre la vue par tables.
 
 Le panneau « Réglages de la carte » permet de :
 
@@ -85,7 +94,7 @@ Le panneau « Réglages de la carte » permet de :
 - masquer les requêtes qui n'ont pu être rattachées à aucune table ;
 - afficher ou non les logins connectés au moment de l'extraction.
 
-Les réglages sont mémorisés dans le navigateur. Les noeuds se déplacent à la souris. Un double-clic sur une base ouvre la vue par tables.
+Les réglages sont mémorisés dans le navigateur.
 
 ## Comment les flux sont déduits
 
@@ -111,7 +120,7 @@ Les réglages sont mémorisés dans le navigateur. Les noeuds se déplacent à l
 
 Une extraction réelle ne doit jamais être commitée : le `.gitignore` exclut tous les fichiers `*.json` sauf ceux du dossier `exemples/`.
 
-Le fichier JSON contient des noms de bases, de tables, de procédures et de logins, ainsi que des extraits de texte de requêtes qui peuvent inclure des valeurs littérales. Mettre `@TexteMax` à 0 avant de partager un fichier hors de l'équipe. La page HTML ne transmet rien et ne charge aucune ressource externe : le fichier est lu localement par le navigateur, et la page fonctionne hors ligne.
+Le fichier JSON contient des noms de bases, de tables, de procédures et de logins, ainsi que des extraits de texte de requêtes qui peuvent inclure des valeurs littérales. Mettre `@TexteMax` à 0 avant de partager un fichier hors de l'équipe. Une image PNG exportée montre les mêmes noms. La page HTML ne transmet rien et ne charge aucune ressource externe : le fichier est lu localement par le navigateur, et la page fonctionne hors ligne.
 
 ## Format du JSON
 

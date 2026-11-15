@@ -42,6 +42,15 @@ h1 small{font-size:12px;font-weight:400;color:var(--muted);margin-left:6px}
 .btn{background:var(--cell);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:12px}
 .btn[aria-pressed="true"]{border-color:var(--text);background:#1d2b47}
 #status{font-size:12px;color:var(--alert)}
+.tools{position:absolute;right:16px;top:8px;display:flex;gap:8px;align-items:center}
+.search{position:relative}
+.search input{background:var(--cell);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:12px;width:300px;max-width:100%}
+#qres{position:absolute;z-index:5;right:0;top:calc(100% + 4px);width:360px;max-width:90vw;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;max-height:320px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+#qres button{display:flex;justify-content:space-between;gap:12px;width:100%;text-align:left;background:none;border:0;border-radius:4px;padding:5px 8px;font-size:12px}
+#qres button span{overflow-wrap:anywhere}
+#qres button:hover,#qres button.act{background:var(--cell)}
+#qres small{color:var(--muted);white-space:nowrap}
+#qres .none{padding:5px 8px;font-size:12px;color:var(--muted)}
 
 main{display:grid;grid-template-columns:minmax(0,1fr) 340px;min-height:0}
 .mapwrap{position:relative;min-height:0;overflow-x:auto}
@@ -94,11 +103,17 @@ footer{border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex
 .heat .dd{display:flex;align-items:center}
 .heat button{height:15px;border:0;border-radius:2px;padding:0;background:var(--cell)}
 .heat button.sel{outline:2px solid var(--text);outline-offset:0}
+.heatleg{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;min-width:560px;font-size:11px;color:var(--muted)}
+.heatleg i{display:inline-block;width:130px;height:8px;border-radius:2px}
+.heatleg b{font-family:var(--mono);font-weight:400;color:var(--text)}
+.heatleg .sep{margin-left:10px}
 
 @media (max-width:900px){
   body{height:auto;display:block}
   main{grid-template-columns:1fr}
   .mapwrap{height:440px}
+  .tools{top:34px;left:16px;right:auto}
+  #qres{left:0;right:auto}
   aside{border-left:0;border-top:1px solid var(--line)}
   .kpis{margin-left:0}
 }
@@ -126,6 +141,13 @@ footer{border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex
   <div class="mapwrap" id="mapwrap">
     <canvas id="map" aria-label="Carte des flux entre applications, bases et tables"></canvas>
     <div class="crumbs" id="crumbs"></div>
+    <div class="tools">
+      <div class="search">
+        <input type="search" id="q" placeholder="Rechercher une base, une table, une procédure" aria-label="Rechercher dans la carte" autocomplete="off" spellcheck="false">
+        <ul id="qres" hidden></ul>
+      </div>
+      <button class="btn" id="png">Exporter en PNG</button>
+    </div>
     <div class="legend">
       <span><i class="ln" style="background:var(--read)"></i>Lecture</span>
       <span><i class="ln" style="background:var(--write)"></i>Écriture</span>
@@ -167,7 +189,7 @@ footer{border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex
       <button class="btn mode" data-mode="W" aria-pressed="false">Écritures</button>
     </div>
   </div>
-  <div class="heatwrap"><div class="heat" id="heat"></div></div>
+  <div class="heatwrap"><div class="heat" id="heat"></div><div class="heatleg" id="heatleg"></div></div>
 </footer>
 
 <script>
@@ -440,18 +462,19 @@ function fmtSize(mo){
   return f(mo,"Mo");
 }
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const C={read:css("--read"),write:css("--write"),alert:css("--alert"),text:css("--text"),muted:css("--muted"),line:css("--line"),cell:css("--cell"),all:css("--all")};
+const C={bg:css("--bg"),read:css("--read"),write:css("--write"),alert:css("--alert"),text:css("--text"),muted:css("--muted"),line:css("--line"),cell:css("--cell"),all:css("--all")};
 const hex=c=>[1,3,5].map(i=>parseInt(c.slice(i,i+2),16));
 const mix=(a,b,t)=>{const A=hex(a),B=hex(b);return "rgb("+A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(",")+")";};
 const visible=e=>state.mode==="all"||e.k===state.mode;
 const unit=()=>CF.METRICS[cfg.metric].u;
+const nSess=n=>n+(n>1?" sessions":" session");
 const short=s=>s.length>30?s.slice(0,29)+"…":s;
 const hot=n=>n.lk[state.slot]>=cfg.lockS&&n.lk[state.slot]>0;
 
 /* Chargement des données */
 function setData(raw,label,isDemo){
   D=CF.prepare(raw);
-  state.db=null;state.sel=null;state.pos={};
+  state.db=null;state.sel=null;state.pos={};qIndex=null;
   const m=D.meta;
   $("sub").textContent=[m.serveur,m.version?"SQL Server "+m.version:null,"moyenne sur "+D.days+(D.days>1?" jours":" jour")].filter(Boolean).join(" · ");
   $("chip").textContent=label;$("chip").classList.toggle("demo",!!isDemo);
@@ -575,6 +598,13 @@ function paintHeat(){
     b.setAttribute("aria-label",b.title);
     b.classList.toggle("sel",s===state.slot);
   });
+  /* Légende : échelle de couleur de la frise, du créneau vide au créneau le plus chargé */
+  const leg=$("heatleg"),bar=el("i"),what=state.mode==="R"?"Lectures":state.mode==="W"?"Écritures":"Lectures et écritures";
+  leg.textContent="";
+  bar.style.background="linear-gradient(90deg,"+[0,.05,.2,.5,1].map(f=>mix(C.cell,col,Math.pow(f,.45))+" "+f*100+"%").join(",")+")";
+  leg.appendChild(el("span",null,what+" par créneau, moyenne en "+unit()+" :"));
+  leg.appendChild(el("b",null,"0"));leg.appendChild(bar);leg.appendChild(el("b",null,fmt(max)));
+  leg.appendChild(el("span","sep","Cliquer sur une case pour afficher ce créneau sur la carte."));
 }
 
 /* Panneau */
@@ -656,7 +686,7 @@ function sessionList(rows,title){
   const ul=el("ul","flows"),max=rows[0][1];
   rows.forEach(r=>{
     const li=el("li","flow"),top=el("div","top");
-    top.appendChild(el("span",null,r[0]));top.appendChild(el("span","val",r[1]+" sessions"));li.appendChild(top);
+    top.appendChild(el("span",null,r[0]));top.appendChild(el("span","val",nSess(r[1])));li.appendChild(top);
     const bar=el("div","bar"),fill=el("i");fill.style.width=Math.max(2,100*r[1]/max)+"%";fill.style.background=C.muted;
     bar.appendChild(fill);li.appendChild(bar);ul.appendChild(li);
   });
@@ -699,8 +729,8 @@ function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h
 const curve=(a,b)=>({cx:(a.x+b.x)/2-(b.y-a.y)*.14,cy:(a.y+b.y)/2+(b.x-a.x)*.14});
 const bez=(a,c,b,t)=>{const u=1-t;return {x:u*u*a.x+2*u*t*c.cx+t*t*b.x,y:u*u*a.y+2*u*t*c.cy+t*t*b.y};};
 
-function draw(ts){
-  requestAnimationFrame(draw);
+function draw(ts){requestAnimationFrame(draw);paint(ts);}
+function paint(ts){
   if(!V)return;
   const s=state.slot,focus=state.hover||state.sel,time=ts/1000;
   ctx.clearRect(0,0,W,H);
@@ -754,7 +784,7 @@ function draw(ts){
     ctx.fillText(short(n.name),p.x,p.y+r+15*S);
     if(n.type!=="apps"&&!n.pseudo){
       ctx.fillStyle=C.muted;ctx.font=(10.5*S)+"px 'IBM Plex Mono',ui-monospace,Consolas,monospace";
-      ctx.fillText(n.type==="client"?n.sessions+" sessions":n.type==="table"&&n.lignes?fmt(n.lignes)+" lignes":fmtSize(n.mo),p.x,p.y+r+28*S);
+      ctx.fillText(n.type==="client"?nSess(n.sessions):n.type==="table"&&n.lignes?fmt(n.lignes)+" lignes":fmtSize(n.mo),p.x,p.y+r+28*S);
     }
     ctx.globalAlpha=1;
   });
@@ -782,6 +812,78 @@ cv.addEventListener("pointermove",e=>{
 cv.addEventListener("pointerup",e=>{const was=drag;drag=null;if(was&&was.moved)return;state.sel=hit(e);refresh();});
 cv.addEventListener("pointerleave",()=>{if(!drag)state.hover=null;});
 cv.addEventListener("dblclick",e=>{const id=hit(e),n=id&&V.byId.get(id);if(n&&n.type==="base"&&n.db!==state.db)openBase(n.db);});
+
+/* Recherche : bases, tables et procédures de l'extraction chargée */
+const qIn=$("q"),qRes=$("qres");
+let qIndex=null,qItems=[],qAct=0;
+function buildIndex(){
+  const out=[],seen=new Set();
+  D.bases.forEach(b=>out.push({name:b.db,label:"Base",type:"base",db:b.db,id:"b:"+b.db}));
+  D.tables.forEach((t,key)=>{if(!t.pseudo)out.push({name:t.name,label:"Table · "+t.db,type:"table",db:t.db,id:"t:"+key});});
+  D.queries.forEach(q=>{
+    if(!q.obj||seen.has(q.db+"|"+q.obj))return;
+    seen.add(q.db+"|"+q.obj);
+    const key=q.writes.concat(q.reads).find(k=>{const t=D.tables.get(k);return t.db===q.db&&!t.pseudo;});
+    out.push({name:q.obj,label:"Procédure · "+q.db,type:"proc",db:q.db,id:key?"t:"+key:null});
+  });
+  return out;
+}
+function paintResults(){
+  qRes.textContent="";
+  if(!qItems.length)qRes.appendChild(el("li","none","Aucun résultat dans ce fichier."));
+  qItems.forEach((o,i)=>{
+    const li=el("li"),b=el("button",i===qAct?"act":null);
+    b.type="button";b.appendChild(el("span",null,o.name));b.appendChild(el("small",null,o.label));
+    b.addEventListener("click",()=>goTo(o));
+    li.appendChild(b);qRes.appendChild(li);
+  });
+  qRes.hidden=false;
+}
+function runSearch(){
+  const s=qIn.value.trim().toLowerCase();
+  qItems=[];qAct=0;
+  if(!s){qRes.hidden=true;return;}
+  if(!qIndex)qIndex=buildIndex();
+  qItems=qIndex.map(o=>({o,p:o.name.toLowerCase().indexOf(s)})).filter(x=>x.p>=0)
+    .sort((a,b)=>a.p-b.p||a.o.name.length-b.o.name.length).slice(0,12).map(x=>x.o);
+  paintResults();
+}
+function goTo(o){
+  qRes.hidden=true;qIn.value="";$("status").textContent="";stop();
+  state.db=o.type==="base"?null:o.db;state.sel=null;
+  rebuild(false);
+  if(o.id&&V.byId.has(o.id)){state.sel=o.id;refresh();}
+  else if(o.id)$("status").textContent=o.name+" : aucun flux affiché avec les réglages actuels.";
+}
+qIn.addEventListener("input",runSearch);
+qIn.addEventListener("focus",runSearch);
+qIn.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){qRes.hidden=true;return;}
+  if(qRes.hidden||!qItems.length)return;
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();qAct=(qAct+(e.key==="ArrowDown"?1:qItems.length-1))%qItems.length;paintResults();}
+  else if(e.key==="Enter"){e.preventDefault();goTo(qItems[qAct]);}
+});
+qRes.addEventListener("mousedown",e=>e.preventDefault());
+document.addEventListener("click",e=>{if(!e.target.closest(".search"))qRes.hidden=true;});
+
+/* Export de la carte affichée : image PNG avec fond, légende et rappel du créneau */
+$("png").addEventListener("click",()=>{
+  if(!V||!W)return;
+  const o=document.createElement("canvas"),g=o.getContext("2d"),dpr=cv.width/W,s=state.slot,d=Math.floor(s/24),h=s%24;
+  o.width=cv.width;o.height=cv.height;
+  paint(performance.now());
+  g.fillStyle=C.bg;g.fillRect(0,0,o.width,o.height);g.drawImage(cv,0,0);
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.font="12px 'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif";g.textAlign="left";g.textBaseline="alphabetic";g.fillStyle=C.muted;
+  g.fillText(["Sillage",D.meta.serveur,state.db===null?"vue instance":"base "+state.db,DAYS_LONG[d]+" "+h+" h",unit(),"moyenne sur "+D.days+(D.days>1?" jours":" jour")].filter(Boolean).join(" · "),16,24);
+  let x=16;const y=H-14;
+  [[C.read,"Lecture"],[C.write,"Écriture"]].forEach(l=>{g.fillStyle=l[0];g.fillRect(x,y-5,18,3);g.fillStyle=C.muted;g.fillText(l[1],x+24,y);x+=40+g.measureText(l[1]).width;});
+  const name=["sillage",D.meta.serveur||"carte",state.db||"instance",DAYS[d].toLowerCase()+String(h).padStart(2,"0")+"h"].join("-").replace(/[^\w.-]+/g,"_")+".png";
+  o.toBlob(b=>{
+    const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  },"image/png");
+});
 
 /* Lecture de la semaine et filtres */
 let timer=null;
