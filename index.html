@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carte des flux SQL Server</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Salle de supervision : carte au centre, panneau de détail et réglages à droite, frise horaire en bas. Thème sombre unique, assumé. */
+:root{
+  color-scheme: dark;
+  --bg:#0b1220;
+  --panel:#111a2c;
+  --line:#22304a;
+  --text:#dbe4f3;
+  --muted:#8493ad;
+  --read:#4cc3ff;
+  --write:#ffb347;
+  --alert:#ff5d6c;
+  --all:#a9b8ff;
+  --cell:#16223a;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.4;display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+button,select,input{font:inherit;color:inherit}
+button,label.btn{cursor:pointer}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:10px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;font-weight:600;margin:0;text-wrap:balance}
+.sub{color:var(--muted);font-family:var(--mono);font-size:12px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted)}
+.chip.demo{border-color:var(--write);color:var(--write)}
+.kpis{display:flex;flex-wrap:wrap;gap:8px 22px;margin-left:auto}
+.kpi{display:flex;flex-direction:column}
+.kpi b{font-family:var(--mono);font-weight:500;font-size:16px;font-variant-numeric:tabular-nums}
+.kpi span{font-size:11px;color:var(--muted)}
+.kpi.r b{color:var(--read)} .kpi.w b{color:var(--write)} .kpi.a b{color:var(--alert)}
+.btn{background:var(--cell);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:12px}
+.btn[aria-pressed="true"]{border-color:var(--text);background:#1d2b47}
+#status{font-size:12px;color:var(--alert)}
+
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;min-height:0}
+.mapwrap{position:relative;min-height:0;overflow-x:auto}
+.mapwrap.drop{outline:2px dashed var(--all);outline-offset:-6px}
+canvas{display:block;width:100%;height:100%;min-width:680px;min-height:420px;touch-action:none}
+.crumbs{position:absolute;left:16px;top:10px;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted)}
+.legend{position:absolute;left:16px;bottom:10px;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--muted);pointer-events:none}
+.legend i{display:inline-block;vertical-align:middle;margin-right:6px}
+.legend .ln{width:18px;height:3px;border-radius:2px}
+.legend .ring{width:11px;height:11px;border-radius:50%;border:2px solid var(--alert)}
+.legend .dot{width:11px;height:11px;border-radius:50%;border:1.5px solid var(--muted)}
+
+aside{border-left:1px solid var(--line);background:var(--panel);padding:12px 16px;overflow-y:auto;min-height:0}
+aside h2{font-size:14px;font-weight:600;margin:0 0 2px;overflow-wrap:anywhere}
+aside .kind{color:var(--muted);font-size:12px;margin-bottom:12px}
+details.cfg{border:1px solid var(--line);border-radius:6px;margin-bottom:14px}
+details.cfg summary{padding:6px 10px;cursor:pointer;font-size:13px;font-weight:500}
+.cfgbody{padding:4px 10px 10px;display:flex;flex-direction:column;gap:9px;font-size:12px}
+.cfgbody label{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted)}
+.cfgbody select,.cfgbody input[type=number]{background:var(--cell);border:1px solid var(--line);border-radius:4px;padding:2px 6px;width:120px}
+.cfgbody .check{justify-content:flex-start}
+.baselist{display:flex;flex-direction:column;gap:3px;max-height:150px;overflow-y:auto;border-top:1px solid var(--line);padding-top:8px}
+.baselist label{justify-content:flex-start;color:var(--text)}
+.baselist small{color:var(--muted);margin-left:auto;font-family:var(--mono)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.stat{border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+.stat b{display:block;font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;color:var(--muted)}
+.warn{border-left:3px solid var(--alert);padding:6px 10px;margin-bottom:10px;font-size:13px;background:rgba(255,93,108,.08)}
+.note{border-left:3px solid var(--line);padding:6px 10px;margin-bottom:10px;font-size:12px;color:var(--muted)}
+h3{font-size:11px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px}
+.flows{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:9px}
+.flow .top{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.flow .top span:first-child{overflow-wrap:anywhere}
+.flow .val{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.flow .bar{height:3px;border-radius:2px;background:var(--cell);margin-top:4px}
+.flow .bar i{display:block;height:100%;border-radius:2px}
+.flow code{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+.R{color:var(--read)} .W{color:var(--write)}
+.actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+
+footer{border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex-wrap:wrap;gap:10px 20px;align-items:flex-start}
+.controls{display:flex;flex-direction:column;gap:8px;min-width:200px}
+.now{font-family:var(--mono);font-size:15px}
+.now small{display:block;font-size:11px;color:var(--muted);font-family:var(--sans)}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+.heatwrap{flex:1;min-width:0;overflow-x:auto}
+.heat{display:grid;grid-template-columns:34px repeat(24,minmax(18px,1fr));gap:2px;min-width:560px;font-size:11px;color:var(--muted)}
+.heat .hh{text-align:center;font-family:var(--mono)}
+.heat .dd{display:flex;align-items:center}
+.heat button{height:15px;border:0;border-radius:2px;padding:0;background:var(--cell)}
+.heat button.sel{outline:2px solid var(--text);outline-offset:0}
+
+@media (max-width:900px){
+  body{height:auto;display:block}
+  main{grid-template-columns:1fr}
+  .mapwrap{height:440px}
+  aside{border-left:0;border-top:1px solid var(--line)}
+  .kpis{margin-left:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Carte des flux SQL Server</h1>
+    <div class="sub" id="sub"></div>
+  </div>
+  <span class="chip" id="chip"></span>
+  <label class="btn" for="file">Charger un fichier JSON</label>
+  <input type="file" id="file" accept=".json,application/json" hidden>
+  <span id="status" role="alert"></span>
+  <div class="kpis">
+    <div class="kpi r"><b id="kRead">0</b><span id="kReadL">lectures</span></div>
+    <div class="kpi w"><b id="kWrite">0</b><span id="kWriteL">écritures</span></div>
+    <div class="kpi"><b id="kExec">0</b><span>exécutions / h</span></div>
+    <div class="kpi a"><b id="kLck">0</b><span>noeuds en attente de verrou</span></div>
+  </div>
+</header>
+
+<main>
+  <div class="mapwrap" id="mapwrap">
+    <canvas id="map" aria-label="Carte des flux entre applications, bases et tables"></canvas>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="legend">
+      <span><i class="ln" style="background:var(--read)"></i>Lecture</span>
+      <span><i class="ln" style="background:var(--write)"></i>Écriture</span>
+      <span><i class="dot"></i>Taille du cercle : volume stocké</span>
+      <span><i class="ring"></i>Attentes de verrou</span>
+      <span><i class="ln" style="background:var(--muted);height:1px"></i>Pointillé : sessions ouvertes à l'extraction</span>
+    </div>
+  </div>
+  <aside>
+    <details class="cfg" id="cfg">
+      <summary>Réglages de la carte</summary>
+      <div class="cfgbody">
+        <label for="cfgMetric">Mesure des flux
+          <select id="cfgMetric"></select></label>
+        <label for="cfgMinMo">Masquer les bases sous (Mo)
+          <input type="number" id="cfgMinMo" min="0" step="100"></label>
+        <label for="cfgMax">Noeuds affichés au plus
+          <input type="number" id="cfgMax" min="3" max="80" step="1"></label>
+        <label for="cfgLock">Alerte verrous dès (s / h)
+          <input type="number" id="cfgLock" min="0" step="5"></label>
+        <label class="check" for="cfgAutres"><input type="checkbox" id="cfgAutres"> Masquer les requêtes non rattachées à une table</label>
+        <label class="check" for="cfgClients"><input type="checkbox" id="cfgClients"> Afficher les logins connectés à l'extraction</label>
+        <div class="baselist" id="baselist"></div>
+      </div>
+    </details>
+    <div id="panel" aria-live="polite"></div>
+  </aside>
+</main>
+
+<footer>
+  <div class="controls">
+    <div class="now" id="now"></div>
+    <div class="row">
+      <button class="btn" id="play" aria-pressed="false">Rejouer la semaine</button>
+    </div>
+    <div class="row" role="group" aria-label="Type de flux">
+      <button class="btn mode" data-mode="all" aria-pressed="true">Tout</button>
+      <button class="btn mode" data-mode="R" aria-pressed="false">Lectures</button>
+      <button class="btn mode" data-mode="W" aria-pressed="false">Écritures</button>
+    </div>
+  </div>
+  <div class="heatwrap"><div class="heat" id="heat"></div></div>
+</footer>
+
+<script>
+/* Coeur sans DOM : lecture du JSON d'extraction, construction du graphe, jeu de démonstration. */
+var CF=(function(){
+"use strict";
+var APPS="@apps",SEP="\u0001";
+var METRICS={
+  r:{l:"Lignes",u:"lignes/h",k:1},
+  e:{l:"Exécutions",u:"exéc./h",k:1},
+  c:{l:"Temps CPU",u:"s CPU/h",k:.001},
+  d:{l:"Durée",u:"s/h",k:.001},
+  lr:{l:"Lectures logiques",u:"pages lues/h",k:1},
+  lw:{l:"Écritures logiques",u:"pages écrites/h",k:1}
+};
+
+function prepare(raw){
+  var D={meta:raw.meta||{},bases:new Map(),tables:new Map(),queries:new Map(),notes:[],clients:raw.clients||[]};
+  (raw.bases||[]).forEach(function(b){
+    D.bases.set(b.db,{db:b.db,mo:+b.mo||0,known:true,qsMin:b.qs_min,erreur:b.erreur,debut:b.debut,fin:b.fin});
+    if(b.erreur)D.notes.push("Base "+b.db+" : extraction en erreur ("+b.erreur+").");
+    else if(b.qs_min>60)D.notes.push("Base "+b.db+" : intervalle Query Store de "+b.qs_min+" min, la répartition horaire est approximative.");
+  });
+  (raw.tables||[]).forEach(function(t){D.tables.set(t.db+SEP+t.t,{db:t.db,name:t.t,lignes:+t.lignes||0,mo:+t.mo||0});});
+  function getQ(db,q){
+    var k=db+SEP+q,o=D.queries.get(k);
+    if(!o){o={db:db,q:q,txt:q===0?"(requêtes hors sélection, regroupées)":"",obj:null,reads:[],writes:[],h:new Map()};D.queries.set(k,o);}
+    return o;
+  }
+  (raw.requetes||[]).forEach(function(x){var o=getQ(x.db,+x.q);o.txt=x.txt||"";o.obj=x.obj||null;});
+  (raw.objets||[]).forEach(function(x){
+    var o=getQ(x.db,+x.q),key=x.odb+SEP+x.ot;
+    if(!D.tables.has(key))D.tables.set(key,{db:x.odb,name:x.ot,lignes:0,mo:0,unknown:true});
+    if(!D.bases.has(x.odb))D.bases.set(x.odb,{db:x.odb,mo:0,known:false});
+    (+x.w?o.writes:o.reads).push(key);
+  });
+  (raw.horaire||[]).forEach(function(x){getQ(x.db,+x.q).h.set(+x.s,x);});
+
+  var min=Infinity,max=-Infinity;
+  D.bases.forEach(function(b){
+    var a=Date.parse(b.debut),z=Date.parse(b.fin);
+    if(!isNaN(a))min=Math.min(min,a);
+    if(!isNaN(z))max=Math.max(max,z);
+  });
+  var days=isFinite(min)&&isFinite(max)?(max-min)/864e5+1/24:(+D.meta.jours||7);
+  D.days=Math.max(1,Math.round(days));
+  D.weeks=Math.max(1,days/7);
+
+  D.queries.forEach(function(o){
+    if(!D.bases.has(o.db))D.bases.set(o.db,{db:o.db,mo:0,known:false});
+    if(!o.reads.length&&!o.writes.length){
+      var other=o.db+SEP+"(autres)";
+      if(!D.tables.has(other))D.tables.set(other,{db:o.db,name:"(autres)",lignes:0,mo:0,pseudo:true});
+      var w=/^\s*(\(@.*?\)\s*)?(insert|update|delete|merge)\b/i.test(o.txt);
+      (w?o.writes:o.reads).push(other);
+    }
+    o.kind=o.writes.length?"W":"R";
+    o.pairs=[];
+    if(o.kind==="W"){
+      o.writes.forEach(function(w){
+        var src=o.reads.filter(function(r){return r!==w;});
+        if(src.length)src.forEach(function(r){o.pairs.push([r,w]);});
+        else o.pairs.push([APPS,w]);
+      });
+    }else o.reads.forEach(function(r){o.pairs.push([r,APPS]);});
+    o.dbs=new Set([o.db]);
+    o.reads.concat(o.writes).forEach(function(k){o.dbs.add(D.tables.get(k).db);});
+  });
+  return D;
+}
+
+/* db = null pour la vue instance (un noeud par base), sinon le nom de la base ouverte (un noeud par table). */
+function view(D,cfg,db){
+  var excl=new Set(cfg.exclues||[]),m=cfg.metric,K=METRICS[m].k/D.weeks;
+  function baseOk(b){var B=D.bases.get(b);return !excl.has(b)&&!(B&&B.known&&B.mo<cfg.minMo);}
+  function mapN(key){
+    if(key===APPS)return APPS;
+    var t=D.tables.get(key);
+    if(!baseOk(t.db))return null;
+    if(t.pseudo&&cfg.masquerAutres)return null;
+    return (db===null||t.db!==db)?"b:"+t.db:"t:"+key;
+  }
+  var nodes=new Map(),edges=new Map(),queries=[];
+  function node(id){
+    var n=nodes.get(id);
+    if(n)return n;
+    if(id===APPS)n={id:id,type:"apps",name:"Applications",mo:0};
+    else if(id.charAt(0)==="b"){var B=D.bases.get(id.slice(2));n={id:id,type:"base",name:B.db,db:B.db,mo:B.mo,unknown:!B.known};}
+    else{var T=D.tables.get(id.slice(2));n={id:id,type:"table",name:T.name,db:T.db,mo:T.mo,lignes:T.lignes,unknown:!!T.unknown,pseudo:!!T.pseudo};}
+    n.vol=0;n.lk=new Float64Array(168);
+    nodes.set(id,n);return n;
+  }
+  D.queries.forEach(function(q){
+    if(!baseOk(q.db))return;
+    if(db!==null&&!q.dbs.has(db))return;
+    queries.push(q);
+    var seen=new Set();
+    q.pairs.forEach(function(p){
+      var a=mapN(p[0]),b=mapN(p[1]);
+      if(!a||!b||a===b)return;
+      if(db!==null&&a.charAt(0)!=="t"&&b.charAt(0)!=="t")return;
+      var k=a+">"+b+">"+q.kind;
+      if(seen.has(k))return;
+      seen.add(k);
+      var e=edges.get(k);
+      if(!e){e={id:k,s:a,d:b,k:q.kind,qs:[],v:new Float64Array(168),tot:0};edges.set(k,e);}
+      e.qs.push(q);
+    });
+  });
+  edges.forEach(function(e){
+    e.qs.forEach(function(q){q.h.forEach(function(x,s){e.v[s]+=(+x[m]||0)*K;});});
+    for(var s=0;s<168;s++)e.tot+=e.v[s];
+    node(e.s).vol+=e.tot;node(e.d).vol+=e.tot;
+  });
+  var ranked=Array.from(nodes.values()).filter(function(n){return n.id!==APPS;}).sort(function(a,b){return b.vol-a.vol;});
+  var hidden=ranked.slice(cfg.maxNoeuds);
+  hidden.forEach(function(n){nodes.delete(n.id);});
+  var E=Array.from(edges.values()).filter(function(e){return e.tot>0&&nodes.has(e.s)&&nodes.has(e.d);});
+  var totR=new Float64Array(168),totW=new Float64Array(168),exec=new Float64Array(168);
+  queries.forEach(function(q){
+    var ids=new Set();
+    (q.writes.length?q.writes:q.reads).forEach(function(k){var id=mapN(k);if(id&&nodes.has(id))ids.add(id);});
+    q.h.forEach(function(x,s){
+      var v=(+x[m]||0)*K;
+      if(q.kind==="R")totR[s]+=v;else totW[s]+=v;
+      exec[s]+=(+x.e||0)/D.weeks;
+      if(x.lk)ids.forEach(function(id){nodes.get(id).lk[s]+=x.lk/1000/D.weeks;});
+    });
+  });
+  var vmax=0;
+  E.forEach(function(e){for(var s=0;s<168;s++)if(e.v[s]>vmax)vmax=e.v[s];});
+  /* Logins connectés au moment de l'extraction : noeuds et liens neutres, en vue instance seulement. */
+  var links=[];
+  if(db===null&&cfg.clients!==false&&D.clients.length){
+    var byLogin=new Map();
+    D.clients.forEach(function(c){
+      if(!nodes.has("b:"+c.db))return;
+      var o=byLogin.get(c.login);
+      if(!o){o={login:c.login,sessions:0,hotes:0,progs:new Set(),bases:new Map()};byLogin.set(c.login,o);}
+      o.sessions+=+c.sessions||0;o.hotes=Math.max(o.hotes,+c.hotes||0);if(c.prog)o.progs.add(c.prog);
+      o.bases.set(c.db,(o.bases.get(c.db)||0)+(+c.sessions||0));
+    });
+    var L=Array.from(byLogin.values()).sort(function(a,b){return b.sessions-a.sessions;});
+    if(L.length>8){
+      var rest=L.slice(7),g={login:"Autres logins ("+rest.length+")",sessions:0,hotes:0,progs:new Set(),bases:new Map()};
+      rest.forEach(function(o){g.sessions+=o.sessions;o.bases.forEach(function(n,b){g.bases.set(b,(g.bases.get(b)||0)+n);});});
+      L=L.slice(0,7).concat([g]);
+    }
+    L.forEach(function(o){
+      var id="c:"+o.login;
+      nodes.set(id,{id:id,type:"client",name:o.login,mo:0,vol:0,lk:new Float64Array(168),sessions:o.sessions,hotes:o.hotes,progs:Array.from(o.progs),bases:o.bases});
+      o.bases.forEach(function(n,b){links.push({s:id,d:"b:"+b,n:n});});
+    });
+  }
+  return {links:links,nodes:Array.from(nodes.values()),byId:nodes,edges:E,queries:queries,totR:totR,totW:totW,exec:exec,hidden:hidden.length,vmax:vmax};
+}
+
+/* Jeu de démonstration, au même format que le JSON produit par extraction-query-store.sql. */
+function demo(){
+  var g=function(h,mu,s){var x=Math.abs(h-mu);x=Math.min(x,24-x);return Math.exp(-x*x/(2*s*s));};
+  var P={
+    jour:function(d,h){return (.08+.8*g(h,11,2.2)+.75*g(h,15.5,2))*(d>=5?.25:1);},
+    continu:function(d,h){return .45+.55*g(h,14,5);},
+    soir:function(d,h){return g(h,19,.8)*(d>=5?.2:1);},
+    nuit:function(d,h){return g(h,2,.9);},
+    matin:function(d,h){return g(h,9,1.1)*(d>=5?.05:(d===0?1:.6));}
+  };
+  var raw={meta:{serveur:"SRV-DEMO",version:"16.0",extrait_le:"2026-11-15T21:00:00",jours:14,top_requetes:60},bases:[],tables:[],requetes:[],objets:[],horaire:[]};
+  [["Ventes",122880],["Referentiel",40960],["Entrepot",307200],["Editique",18432],["Archives",900]].forEach(function(b){
+    raw.bases.push({db:b[0],mo:b[1],qs_min:60,qs_etat:"READ_WRITE",debut:"2026-11-01T00:00:00",fin:"2026-11-14T23:00:00"});
+  });
+  [["Ventes","dbo.Commandes",84e6,31000],["Ventes","dbo.LignesCommande",41e7,62000],["Ventes","dbo.Clients",32e5,2100],["Ventes","dbo.Paiements",79e6,12000],
+   ["Referentiel","dbo.Produits",4e5,600],["Referentiel","dbo.Tarifs",6e6,1900],["Referentiel","dbo.Adresses",9e6,3000],
+   ["Entrepot","fait.Ventes",41e7,150000],["Entrepot","dim.Client",32e5,1500],["Entrepot","dim.Produit",4e5,300],
+   ["Editique","dbo.Documents",22e6,15000],["Archives","dbo.Commandes_2015",3e7,800]].forEach(function(t){
+    raw.tables.push({db:t[0],t:t[1],lignes:t[2],mo:t[3]});
+  });
+  /* base, texte, procédure, lectures, écritures, profil, lignes/h au pic, lignes par exécution, ms CPU par ligne, ms de verrou/h au pic */
+  var Q=[
+    ["Ventes","SELECT c.Id, c.Statut, cl.Nom FROM dbo.Commandes c JOIN dbo.Clients cl ON cl.Id = c.ClientId WHERE c.Id = @p0",null,["Ventes|dbo.Commandes","Ventes|dbo.Clients"],[],"jour",3e6,15,.004,0],
+    ["Ventes","SELECT Produit, Quantite, PrixUnitaire FROM dbo.LignesCommande WHERE CommandeId = @p0",null,["Ventes|dbo.LignesCommande"],[],"jour",8e6,40,.002,0],
+    ["Ventes","(@p0 int,@p1 datetime2)INSERT INTO dbo.Commandes (ClientId, DateCommande) VALUES (@p0, @p1)",null,[],["Ventes|dbo.Commandes"],"jour",4e4,1,.3,2000],
+    ["Ventes","INSERT INTO dbo.LignesCommande (CommandeId, ProduitId, Quantite) SELECT @c, p.Id, @q FROM Referentiel.dbo.Produits p WHERE p.Code = @code","dbo.AjouterLigne",["Referentiel|dbo.Produits"],["Ventes|dbo.LignesCommande"],"jour",16e4,4,.2,0],
+    ["Ventes","INSERT INTO dbo.Paiements (CommandeId, Montant) VALUES (@p0, @p1)",null,[],["Ventes|dbo.Paiements"],"jour",35e3,1,.3,0],
+    ["Ventes","UPDATE dbo.Commandes SET Statut = 'CLOTUREE' WHERE DateCommande < @d AND Statut = 'LIVREE'","dbo.ClotureJournaliere",[],["Ventes|dbo.Commandes"],"soir",2e6,5e4,.05,24e4],
+    ["Ventes","UPDATE l SET PrixUnitaire = t.Prix FROM dbo.LignesCommande l JOIN Referentiel.dbo.Tarifs t ON t.ProduitId = l.ProduitId","dbo.MajTarifs",["Referentiel|dbo.Tarifs"],["Ventes|dbo.LignesCommande"],"soir",12e5,4e4,.06,6e4],
+    ["Referentiel","SELECT Id, Code, Libelle FROM dbo.Produits WHERE Code = @p0",null,["Referentiel|dbo.Produits"],[],"continu",9e5,1,.01,0],
+    ["Referentiel","MERGE dbo.Tarifs t USING #import s ON s.ProduitId = t.ProduitId WHEN MATCHED THEN UPDATE SET Prix = s.Prix","dbo.ImportTarifs",[],["Referentiel|dbo.Tarifs"],"nuit",6e5,6e5,.02,0],
+    ["Referentiel","SELECT Ligne1, CodePostal, Ville FROM dbo.Adresses WHERE ClientId = @p0",null,["Referentiel|dbo.Adresses"],[],"jour",11e5,2,.008,0],
+    ["Entrepot","INSERT INTO fait.Ventes SELECT ... FROM Ventes.dbo.LignesCommande l JOIN Ventes.dbo.Commandes c ON c.Id = l.CommandeId","etl.ChargerVentes",["Ventes|dbo.LignesCommande","Ventes|dbo.Commandes"],["Entrepot|fait.Ventes"],"nuit",24e6,24e6,.004,0],
+    ["Entrepot","MERGE dim.Client d USING Ventes.dbo.Clients s ON s.Id = d.ClientId ...","etl.ChargerClients",["Ventes|dbo.Clients"],["Entrepot|dim.Client"],"nuit",3e6,3e6,.006,0],
+    ["Entrepot","MERGE dim.Produit d USING Referentiel.dbo.Produits s ON s.Id = d.ProduitId ...","etl.ChargerProduits",["Referentiel|dbo.Produits"],["Entrepot|dim.Produit"],"nuit",4e5,4e5,.006,0],
+    ["Entrepot","SELECT p.Famille, c.Region, SUM(v.Montant) FROM fait.Ventes v JOIN dim.Client c ON ... JOIN dim.Produit p ON ... GROUP BY p.Famille, c.Region",null,["Entrepot|fait.Ventes","Entrepot|dim.Client","Entrepot|dim.Produit"],[],"matin",15e6,2e6,.003,0],
+    ["Editique","INSERT INTO dbo.Documents (CommandeId, Modele) SELECT c.Id, @m FROM Ventes.dbo.Commandes c WHERE c.Statut = 'A_EDITER'","dbo.GenererDocuments",["Ventes|dbo.Commandes"],["Editique|dbo.Documents"],"jour",2e5,500,.1,0],
+    ["Editique","SELECT Contenu FROM dbo.Documents WHERE Id = @p0",null,["Editique|dbo.Documents"],[],"jour",6e5,1,.05,0],
+    ["Archives","SELECT * FROM dbo.Commandes_2015 WHERE ClientId = @p0",null,["Archives|dbo.Commandes_2015"],[],"jour",2e4,10,.01,0]
+  ];
+  var W=2;
+  Q.forEach(function(q,i){
+    var id=100+i;
+    raw.requetes.push({db:q[0],q:id,txt:q[1],obj:q[2]||undefined});
+    q[3].forEach(function(k){var p=k.split("|");raw.objets.push({db:q[0],q:id,odb:p[0],ot:p[1],w:0});});
+    q[4].forEach(function(k){var p=k.split("|");raw.objets.push({db:q[0],q:id,odb:p[0],ot:p[1],w:1});});
+    for(var s=0;s<168;s++){
+      var d=Math.floor(s/24),h=s%24,n=Math.sin(i*127.1+s*74.7)*43758.5453;n=.86+.28*(n-Math.floor(n));
+      var r=Math.round(q[6]*P[q[5]](d,h)*n*W);
+      if(r<1)continue;
+      var e=Math.max(1,Math.round(r/q[7])),c=Math.round(r*q[8]),row={db:q[0],q:id,s:s,e:e,r:r,c:c,d:Math.round(c*1.6),lr:Math.round(r*(q[7]>1000?.02:3))};
+      if(q[4].length)row.lw=Math.round(r*.4);
+      var lk=Math.round(q[9]*P[q[5]](d,h)*W);
+      if(lk>0)row.lk=lk;
+      raw.horaire.push(row);
+    }
+  });
+  ["Ventes","Referentiel","Entrepot"].forEach(function(db,i){
+    for(var s=0;s<168;s++){var r=Math.round(15e4*P.jour(Math.floor(s/24),s%24)*W*(1+i*.3));raw.horaire.push({db:db,q:0,s:s,e:Math.round(r/5),r:r,c:Math.round(r*.01),d:Math.round(r*.02),lr:r*2});}
+  });
+  [["svc_web","Ventes",42,6,"Site marchand"],["svc_web","Referentiel",12,6,"Site marchand"],["svc_etl","Entrepot",4,1,"Microsoft JDBC Driver for SQL Server"],
+   ["svc_etl","Ventes",2,1,"Microsoft JDBC Driver for SQL Server"],["svc_etl","Referentiel",1,1,"Microsoft JDBC Driver for SQL Server"],
+   ["svc_editique","Editique",6,2,"Editique"],["svc_editique","Ventes",3,2,"Editique"],["svc_batch","Ventes",2,1,"SQLAgent - TSQL JobStep"],
+   ["svc_rapports","Entrepot",9,3,"Report Server"],["DOMAINE\\dba","Archives",1,1,"Microsoft SQL Server Management Studio"]].forEach(function(c){
+    raw.clients=raw.clients||[];raw.clients.push({db:c[1],login:c[0],prog:c[4],hotes:c[3],sessions:c[2]});
+  });
+  return raw;
+}
+return {APPS:APPS,METRICS:METRICS,prepare:prepare,view:view,demo:demo};
+})();
+if(typeof module!=="undefined")module.exports=CF;
+</script>
+
+<script>
+(function(){
+"use strict";
+const DAYS=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+const DAYS_LONG=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+const $=id=>document.getElementById(id);
+const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function loadCfg(){try{return JSON.parse(localStorage.getItem("carteflux.cfg"))||{};}catch(e){return {};}}
+function saveCfg(){try{localStorage.setItem("carteflux.cfg",JSON.stringify(cfg));}catch(e){}}
+const cfg=Object.assign({metric:"r",minMo:0,maxNoeuds:24,lockS:30,masquerAutres:false,clients:true,exclues:[]},loadCfg());
+if(!CF.METRICS[cfg.metric])cfg.metric="r";
+const state={slot:0,mode:"all",sel:null,hover:null,db:null,playing:false,pos:{}};
+let D=null,V=null;
+
+function fmt(v){
+  const f=(x,u)=>x.toLocaleString("fr-FR",{maximumFractionDigits:x<10?1:0})+u;
+  if(v>=1e9)return f(v/1e9," Md");
+  if(v>=1e6)return f(v/1e6," M");
+  if(v>=1e3)return f(v/1e3," k");
+  if(v>0&&v<10)return v.toLocaleString("fr-FR",{maximumFractionDigits:2});
+  return Math.round(v).toLocaleString("fr-FR");
+}
+function fmtSize(mo){
+  if(!mo)return "taille inconnue";
+  const f=(x,u)=>x.toLocaleString("fr-FR",{maximumFractionDigits:x<10?1:0})+" "+u;
+  if(mo>=1048576)return f(mo/1048576,"To");
+  if(mo>=1024)return f(mo/1024,"Go");
+  return f(mo,"Mo");
+}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C={read:css("--read"),write:css("--write"),alert:css("--alert"),text:css("--text"),muted:css("--muted"),line:css("--line"),cell:css("--cell"),all:css("--all")};
+const hex=c=>[1,3,5].map(i=>parseInt(c.slice(i,i+2),16));
+const mix=(a,b,t)=>{const A=hex(a),B=hex(b);return "rgb("+A.map((v,i)=>Math.round(v+(B[i]-v)*t)).join(",")+")";};
+const visible=e=>state.mode==="all"||e.k===state.mode;
+const unit=()=>CF.METRICS[cfg.metric].u;
+const short=s=>s.length>30?s.slice(0,29)+"…":s;
+const hot=n=>n.lk[state.slot]>=cfg.lockS&&n.lk[state.slot]>0;
+
+/* Chargement des données */
+function setData(raw,label,isDemo){
+  D=CF.prepare(raw);
+  state.db=null;state.sel=null;state.pos={};
+  cfg.exclues=cfg.exclues.filter(b=>D.bases.has(b));
+  const m=D.meta;
+  $("sub").textContent=[m.serveur,m.version?"SQL Server "+m.version:null,"moyenne sur "+D.days+" jours"].filter(Boolean).join(" · ");
+  $("chip").textContent=label;$("chip").classList.toggle("demo",!!isDemo);
+  buildBaseList();rebuild(true);
+}
+function readFile(file){
+  $("status").textContent="";
+  const fr=new FileReader();
+  fr.onload=()=>{
+    try{
+      const raw=JSON.parse(String(fr.result).replace(/^﻿/,""));
+      if(!raw||!Array.isArray(raw.horaire)||!raw.horaire.length)throw new Error("aucune donnée horaire");
+      setData(raw,file.name,false);
+    }catch(e){$("status").textContent="Fichier illisible : "+e.message+". Le fichier attendu est le JSON produit par extraction-query-store.sql.";}
+  };
+  fr.readAsText(file);
+}
+$("file").addEventListener("change",e=>{if(e.target.files[0])readFile(e.target.files[0]);e.target.value="";});
+const wrap=$("mapwrap");
+["dragenter","dragover"].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();wrap.classList.add("drop");}));
+["dragleave","drop"].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();wrap.classList.remove("drop");}));
+document.addEventListener("drop",e=>{const f=e.dataTransfer&&e.dataTransfer.files[0];if(f)readFile(f);});
+
+/* Réglages */
+Object.keys(CF.METRICS).forEach(k=>{const o=el("option",null,CF.METRICS[k].l);o.value=k;$("cfgMetric").appendChild(o);});
+function syncCfgUi(){$("cfgMetric").value=cfg.metric;$("cfgMinMo").value=cfg.minMo;$("cfgMax").value=cfg.maxNoeuds;$("cfgLock").value=cfg.lockS;$("cfgAutres").checked=cfg.masquerAutres;$("cfgClients").checked=cfg.clients;}
+function onCfg(){
+  cfg.metric=$("cfgMetric").value;
+  cfg.minMo=Math.max(0,+$("cfgMinMo").value||0);
+  cfg.maxNoeuds=clamp(Math.round(+$("cfgMax").value||24),3,80);
+  cfg.lockS=Math.max(0,+$("cfgLock").value||0);
+  cfg.masquerAutres=$("cfgAutres").checked;
+  cfg.clients=$("cfgClients").checked;
+  saveCfg();buildBaseList();rebuild(false);
+}
+["cfgMetric","cfgMinMo","cfgMax","cfgLock","cfgAutres","cfgClients"].forEach(id=>$(id).addEventListener("change",onCfg));
+function buildBaseList(){
+  const box=$("baselist");box.textContent="";
+  Array.from(D.bases.values()).sort((a,b)=>b.mo-a.mo).forEach((b,i)=>{
+    const l=el("label","check"),c=el("input");
+    c.type="checkbox";c.id="base"+i;l.htmlFor=c.id;
+    const small=b.known&&b.mo<cfg.minMo;
+    c.checked=!small&&cfg.exclues.indexOf(b.db)<0;c.disabled=small;
+    c.addEventListener("change",()=>{
+      cfg.exclues=cfg.exclues.filter(x=>x!==b.db);
+      if(!c.checked)cfg.exclues.push(b.db);
+      if(state.db===b.db)state.db=null;
+      saveCfg();rebuild(false);
+    });
+    l.appendChild(c);l.appendChild(document.createTextNode(" "+b.db));
+    l.appendChild(el("small",null,b.known?fmtSize(b.mo):"hors extraction"));
+    box.appendChild(l);
+  });
+}
+
+/* Vue et placement automatique */
+function rebuild(pickPeak){
+  V=CF.view(D,cfg,state.db);
+  const maxMo=Math.max(1,...V.nodes.map(n=>n.mo||0));
+  V.nodes.forEach(n=>{n.pin=n.type==="apps"||n.type==="client";n.r0=n.type==="apps"?14:n.type==="client"?10:9+26*Math.sqrt((n.mo||0)/maxMo);});
+  autoLayout();
+  if(pickPeak){let best=0;for(let s=1;s<168;s++)if(V.totR[s]+V.totW[s]>V.totR[best]+V.totW[best])best=s;state.slot=best;}
+  if(state.sel&&!V.byId.has(state.sel))state.sel=null;
+  state.hover=null;
+  $("kReadL").textContent="lectures, "+unit();$("kWriteL").textContent="écritures, "+unit();
+  paintCrumbs();refresh();
+}
+function autoLayout(){
+  const mov=V.nodes.filter(n=>!n.pin),col=V.nodes.filter(n=>n.pin).sort((a,b)=>(a.type==="apps")-(b.type==="apps")),cx=590,cy=290;
+  mov.forEach((n,i)=>{const a=2*Math.PI*i/Math.max(1,mov.length)-Math.PI/2;n.px=cx+310*Math.cos(a);n.py=cy+200*Math.sin(a);});
+  col.forEach((n,i)=>{n.px=75;n.py=col.length===1?cy:50+i*(470/(col.length-1));});
+  const vt=Math.max(1,...V.edges.map(e=>e.tot));
+  for(let it=0;it<320;it++){
+    const k=1-it/320;
+    for(let i=0;i<V.nodes.length;i++)for(let j=i+1;j<V.nodes.length;j++){
+      const a=V.nodes[i],b=V.nodes[j];let dx=b.px-a.px,dy=b.py-a.py,d=Math.hypot(dx,dy)||1;
+      const min=(a.r0+b.r0+95)*1.5;
+      if(d<min){const f=(min-d)/d*.5*k;dx*=f;dy*=f;if(!a.pin){a.px-=dx;a.py-=dy*1.15;}if(!b.pin){b.px+=dx;b.py+=dy*1.15;}}
+    }
+    V.edges.forEach(e=>{
+      const a=V.byId.get(e.s),b=V.byId.get(e.d);let dx=b.px-a.px,dy=b.py-a.py,d=Math.hypot(dx,dy)||1;
+      const f=(d-230)/d*.03*(.3+.7*Math.sqrt(e.tot/vt))*k;dx*=f;dy*=f;
+      if(!a.pin){a.px+=dx;a.py+=dy;}if(!b.pin){b.px-=dx;b.py-=dy;}
+    });
+    mov.forEach(n=>{n.px+=(cx-n.px)*.012*k;n.py+=(cy-n.py)*.012*k;n.px=clamp(n.px,200,950);n.py=clamp(n.py,45,520);});
+  }
+  const saved=state.pos[state.db||""]||{};
+  V.nodes.forEach(n=>{n.x=n.px/1000;n.y=n.py/600;if(saved[n.id]){n.x=saved[n.id].x;n.y=saved[n.id].y;}});
+}
+function openBase(db){state.db=db;state.sel=null;rebuild(false);}
+function paintCrumbs(){
+  const c=$("crumbs");c.textContent="";
+  if(state.db===null){c.appendChild(el("span",null,"Vue instance : un noeud par base. Double-clic sur une base pour l'ouvrir."));return;}
+  const b=el("button","btn","Retour à l'instance");
+  b.addEventListener("click",()=>{state.db=null;state.sel=null;rebuild(false);});
+  c.appendChild(b);c.appendChild(el("span",null,"Base "+state.db+" : un noeud par table"));
+}
+
+/* Frise horaire */
+const heat=$("heat"),cells=[];
+(function buildHeat(){
+  heat.appendChild(el("span"));
+  for(let h=0;h<24;h++)heat.appendChild(el("span","hh",h%3===0?h+"h":""));
+  for(let d=0;d<7;d++){
+    heat.appendChild(el("span","dd",DAYS[d]));
+    for(let h=0;h<24;h++){
+      const b=el("button");
+      b.addEventListener("click",()=>{state.slot=d*24+h;stop();refresh();});
+      heat.appendChild(b);cells.push(b);
+    }
+  }
+})();
+const slotTotal=s=>(state.mode!=="W"?V.totR[s]:0)+(state.mode!=="R"?V.totW[s]:0);
+function paintHeat(){
+  let max=0;for(let s=0;s<168;s++)max=Math.max(max,slotTotal(s));
+  const col=state.mode==="R"?C.read:state.mode==="W"?C.write:C.all;
+  cells.forEach((b,s)=>{
+    const v=slotTotal(s);
+    b.style.background=max>0&&v>0?mix(C.cell,col,Math.pow(v/max,.45)):C.cell;
+    b.title=DAYS_LONG[Math.floor(s/24)]+" "+(s%24)+" h : "+fmt(v)+" "+unit();
+    b.setAttribute("aria-label",b.title);
+    b.classList.toggle("sel",s===state.slot);
+  });
+}
+
+/* Panneau */
+const panel=$("panel");
+const nodeName=id=>V.byId.get(id).name;
+function flowItem(e,v,max){
+  const li=el("li","flow"),top=el("div","top");
+  top.appendChild(el("span",null,nodeName(e.s)+" → "+nodeName(e.d)));
+  top.appendChild(el("span","val "+e.k,fmt(v)));
+  li.appendChild(top);
+  const bar=el("div","bar"),fill=el("i");
+  fill.style.width=Math.max(2,100*Math.sqrt(v/max))+"%";fill.style.background=e.k==="R"?C.read:C.write;
+  bar.appendChild(fill);li.appendChild(bar);
+  return li;
+}
+function queryItem(q,v,max){
+  const li=el("li","flow"),top=el("div","top");
+  top.appendChild(el("span",null,q.db+(q.q?" · requête "+q.q:"")+(q.obj?" · "+q.obj:"")));
+  top.appendChild(el("span","val "+q.kind,fmt(v)));
+  li.appendChild(top);
+  const bar=el("div","bar"),fill=el("i");
+  fill.style.width=Math.max(2,100*Math.sqrt(v/max))+"%";fill.style.background=q.kind==="R"?C.read:C.write;
+  bar.appendChild(fill);li.appendChild(bar);
+  if(q.txt)li.appendChild(el("code",null,q.txt));
+  return li;
+}
+function paintPanel(){
+  panel.textContent="";
+  const s=state.slot,K=CF.METRICS[cfg.metric].k/D.weeks;
+  const when=DAYS_LONG[Math.floor(s/24)]+", de "+(s%24)+" h à "+(s%24+1)+" h";
+  if(!state.sel){
+    panel.appendChild(el("h2",null,"Flux les plus actifs"));
+    panel.appendChild(el("div","kind",when+" · "+unit()));
+    V.nodes.filter(hot).forEach(n=>panel.appendChild(el("div","warn",n.name+" : "+fmt(n.lk[s])+" s d'attente de verrou par heure.")));
+    const top=V.edges.filter(visible).map(e=>({e,v:e.v[s]})).filter(o=>o.v>0).sort((a,b)=>b.v-a.v).slice(0,8);
+    if(top.length){const ul=el("ul","flows");top.forEach(o=>ul.appendChild(flowItem(o.e,o.v,top[0].v)));panel.appendChild(ul);}
+    else panel.appendChild(el("div","note","Aucun flux sur ce créneau avec ces réglages."));
+    if(V.hidden)panel.appendChild(el("div","note",V.hidden+" noeuds moins actifs sont masqués. Le plafond se règle dans les réglages de la carte."));
+    D.notes.forEach(t=>panel.appendChild(el("div","note",t)));
+    return;
+  }
+  const n=V.byId.get(state.sel);
+  if(n.type==="client"){paintClient(n);return;}
+  const acts=el("div","actions"),back=el("button","btn","Vue d'ensemble");
+  back.addEventListener("click",()=>{state.sel=null;refresh();});acts.appendChild(back);
+  if(n.type==="base"&&n.db!==state.db){const o=el("button","btn","Ouvrir cette base");o.addEventListener("click",()=>openBase(n.db));acts.appendChild(o);}
+  panel.appendChild(acts);
+  panel.appendChild(el("h2",null,n.name));
+  panel.appendChild(el("div","kind",(n.type==="apps"?"Tout ce qui se connecte depuis l'extérieur":n.type==="base"?"Base de données":"Table de "+n.db)+" · "+when));
+  const mine=V.edges.filter(e=>e.s===n.id||e.d===n.id);
+  const sum=k=>mine.filter(e=>e.k===k).reduce((a,e)=>a+e.v[s],0);
+  const stats=el("div","stats");
+  const stat=(v,l)=>{const d=el("div","stat");d.appendChild(el("b",null,v));d.appendChild(el("span",null,l));stats.appendChild(d);};
+  if(n.type!=="apps"&&!n.pseudo){stat(fmtSize(n.mo),"volume stocké");if(n.type==="table")stat(n.lignes?fmt(n.lignes):"inconnu","lignes");}
+  stat(fmt(sum("R")),"lectures, "+unit());stat(fmt(sum("W")),"écritures, "+unit());
+  if(n.type!=="apps")stat(fmt(n.lk[s])+" s","attente de verrou / h");
+  panel.appendChild(stats);
+  if(hot(n))panel.appendChild(el("div","warn","Attentes de verrou au-dessus du seuil sur ce créneau."));
+  const shown=mine.filter(visible).map(e=>({e,v:e.v[s]})).filter(o=>o.v>0).sort((a,b)=>b.v-a.v);
+  panel.appendChild(el("h3",null,"Flux"));
+  if(shown.length){const ul=el("ul","flows");shown.slice(0,10).forEach(o=>ul.appendChild(flowItem(o.e,o.v,shown[0].v)));panel.appendChild(ul);}
+  else panel.appendChild(el("div","note","Aucun flux sur ce créneau."));
+  if(n.type==="base"&&cfg.clients){
+    const m=new Map();
+    D.clients.filter(c=>c.db===n.db).forEach(c=>m.set(c.login,(m.get(c.login)||0)+(+c.sessions||0)));
+    sessionList(Array.from(m.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8),"Logins connectés à l'extraction");
+  }
+  const qs=new Map();
+  shown.forEach(o=>o.e.qs.forEach(q=>{const x=q.h.get(s);const v=x?(+x[cfg.metric]||0)*K:0;if(v>0)qs.set(q,v);}));
+  const tq=Array.from(qs.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  if(tq.length){
+    panel.appendChild(el("h3",null,"Requêtes principales"));
+    const ul=el("ul","flows");tq.forEach(o=>ul.appendChild(queryItem(o[0],o[1],tq[0][1])));panel.appendChild(ul);
+  }
+}
+function sessionList(rows,title){
+  if(!rows.length)return;
+  panel.appendChild(el("h3",null,title));
+  const ul=el("ul","flows"),max=rows[0][1];
+  rows.forEach(r=>{
+    const li=el("li","flow"),top=el("div","top");
+    top.appendChild(el("span",null,r[0]));top.appendChild(el("span","val",r[1]+" sessions"));li.appendChild(top);
+    const bar=el("div","bar"),fill=el("i");fill.style.width=Math.max(2,100*r[1]/max)+"%";fill.style.background=C.muted;
+    bar.appendChild(fill);li.appendChild(bar);ul.appendChild(li);
+  });
+  panel.appendChild(ul);
+}
+function paintClient(n){
+  const acts=el("div","actions"),back=el("button","btn","Vue d'ensemble");
+  back.addEventListener("click",()=>{state.sel=null;refresh();});acts.appendChild(back);panel.appendChild(acts);
+  panel.appendChild(el("h2",null,n.name));
+  panel.appendChild(el("div","kind","Login connecté au moment de l'extraction"));
+  const stats=el("div","stats");
+  const stat=(v,l)=>{const d=el("div","stat");d.appendChild(el("b",null,v));d.appendChild(el("span",null,l));stats.appendChild(d);};
+  stat(String(n.sessions),"sessions ouvertes");if(n.hotes)stat(String(n.hotes),"machines");
+  panel.appendChild(stats);
+  if(n.progs.length)panel.appendChild(el("div","note","Application déclarée : "+n.progs.join(", ")));
+  sessionList(Array.from(n.bases.entries()).sort((a,b)=>b[1]-a[1]),"Bases utilisées");
+  panel.appendChild(el("div","note","Photo prise à l'extraction : les volumes par login ne sont pas connus du Query Store."));
+}
+function paintKpis(){
+  const s=state.slot;
+  $("kRead").textContent=fmt(V.totR[s]);$("kWrite").textContent=fmt(V.totW[s]);$("kExec").textContent=fmt(V.exec[s]);
+  $("kLck").textContent=V.nodes.filter(hot).length;
+  const now=$("now");now.textContent=DAYS_LONG[Math.floor(s/24)]+" "+String(s%24).padStart(2,"0")+":00";
+  now.appendChild(el("small",null,"moyenne horaire sur "+D.days+" jours"));
+}
+function refresh(){paintKpis();paintHeat();paintPanel();}
+
+/* Carte */
+const cv=$("map"),ctx=cv.getContext("2d");
+let W=0,H=0,S=1;
+function resize(){
+  const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  W=r.width;H=r.height;S=clamp(Math.min(W/900,H/520),.7,1.25);
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+const P=n=>({x:n.x*W,y:n.y*(H-60)+30});
+const radius=n=>n.r0*S;
+function rr(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+const curve=(a,b)=>({cx:(a.x+b.x)/2-(b.y-a.y)*.14,cy:(a.y+b.y)/2+(b.x-a.x)*.14});
+const bez=(a,c,b,t)=>{const u=1-t;return {x:u*u*a.x+2*u*t*c.cx+t*t*b.x,y:u*u*a.y+2*u*t*c.cy+t*t*b.y};};
+
+function draw(ts){
+  requestAnimationFrame(draw);
+  if(!V)return;
+  const s=state.slot,focus=state.hover||state.sel,time=ts/1000;
+  ctx.clearRect(0,0,W,H);
+  const lmax=Math.log10(Math.max(V.vmax,1e-9));
+  const linked=new Set();
+  V.edges.forEach((e,i)=>{
+    if(!visible(e))return;
+    const v=e.v[s];if(v<=0)return;
+    const on=!focus||e.s===focus||e.d===focus;
+    if(focus&&on){linked.add(e.s);linked.add(e.d);}
+    const a=P(V.byId.get(e.s)),b=P(V.byId.get(e.d)),c=curve(a,b);
+    const t=clamp((Math.log10(v)-lmax+3.5)/3.5,0,1),col=e.k==="R"?C.read:C.write;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.quadraticCurveTo(c.cx,c.cy,b.x,b.y);
+    ctx.strokeStyle=col;ctx.lineWidth=(.6+5.2*t)*S;ctx.globalAlpha=(on?1:.12)*(.2+.42*t);ctx.stroke();
+    if(!reduced&&on){
+      const n=1+Math.round(5*t),sp=.1+.16*t;
+      ctx.fillStyle=col;ctx.globalAlpha=.95;
+      for(let k=0;k<n;k++){const p=bez(a,c,b,(time*sp+k/n+i*.137)%1);ctx.beginPath();ctx.arc(p.x,p.y,(1.4+1.8*t)*S,0,6.283);ctx.fill();}
+    }
+    ctx.globalAlpha=1;
+  });
+  if(V.links.length){
+    const nmax=Math.max(...V.links.map(l=>l.n));
+    ctx.setLineDash([3,4]);ctx.strokeStyle=C.muted;
+    V.links.forEach(l=>{
+      const on=!focus||l.s===focus||l.d===focus;
+      if(focus&&on){linked.add(l.s);linked.add(l.d);}
+      const a=P(V.byId.get(l.s)),b=P(V.byId.get(l.d));
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+      ctx.lineWidth=(.8+2.6*Math.sqrt(l.n/nmax))*S;ctx.globalAlpha=on?.5:.08;ctx.stroke();
+    });
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+  }
+  ctx.textAlign="center";ctx.textBaseline="alphabetic";
+  V.nodes.forEach(n=>{
+    const p=P(n),r=radius(n),on=!focus||n.id===focus||linked.has(n.id),sel=n.id===state.sel;
+    ctx.globalAlpha=on?1:.3;
+    ctx.setLineDash(n.unknown||n.pseudo?[4,3]:[]);
+    if(n.pin){rr(p.x-r,p.y-r,2*r,2*r,n.type==="client"?3:5);ctx.fillStyle=n.type==="client"?"#182338":"#1b2a47";ctx.fill();ctx.strokeStyle=sel?C.text:(n.type==="client"?C.muted:"#7f93bd");ctx.lineWidth=sel?2.5:1.5;ctx.stroke();}
+    else{
+      ctx.beginPath();ctx.arc(p.x,p.y,r,0,6.283);ctx.fillStyle=n.type==="base"?"#1a2a4a":"#16233d";ctx.fill();
+      ctx.strokeStyle=sel?C.text:(n.type==="base"?"#8ea2cf":"#5b6f96");ctx.lineWidth=sel?2.5:(n.type==="base"?2:1.5);ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if(hot(n)){
+      const k=reduced?.5:(.5+.5*Math.sin(time*3.2));
+      ctx.beginPath();ctx.arc(p.x,p.y,r+4+3*k,0,6.283);ctx.strokeStyle=C.alert;ctx.lineWidth=2.5;
+      ctx.globalAlpha=(on?1:.3)*(.55+.45*k);ctx.stroke();ctx.globalAlpha=on?1:.3;
+    }
+    ctx.fillStyle=C.text;ctx.font="500 "+(12.5*S)+"px 'IBM Plex Sans',sans-serif";
+    ctx.fillText(short(n.name),p.x,p.y+r+15*S);
+    if(n.type!=="apps"&&!n.pseudo){
+      ctx.fillStyle=C.muted;ctx.font=(10.5*S)+"px 'IBM Plex Mono',monospace";
+      ctx.fillText(n.type==="client"?n.sessions+" sessions":n.type==="table"&&n.lignes?fmt(n.lignes)+" lignes":fmtSize(n.mo),p.x,p.y+r+28*S);
+    }
+    ctx.globalAlpha=1;
+  });
+  if(!V.edges.length){ctx.fillStyle=C.muted;ctx.font=(14*S)+"px 'IBM Plex Sans',sans-serif";ctx.fillText("Aucun flux à afficher avec ces réglages.",W/2,H/2);}
+}
+function hit(e){
+  const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;let best=null;
+  V.nodes.forEach(n=>{const p=P(n);if(Math.hypot(p.x-x,p.y-y)<=radius(n)+8)best=n.id;});
+  return best;
+}
+let drag=null;
+cv.addEventListener("pointerdown",e=>{const id=hit(e);if(!id)return;drag={id,x:e.clientX,y:e.clientY,moved:false};cv.setPointerCapture(e.pointerId);});
+cv.addEventListener("pointermove",e=>{
+  if(drag){
+    if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4)drag.moved=true;
+    if(drag.moved){
+      const r=cv.getBoundingClientRect(),n=V.byId.get(drag.id);
+      n.x=clamp((e.clientX-r.left)/W,.03,.97);n.y=clamp((e.clientY-r.top-30)/(H-60),0,.95);
+      const key=state.db||"";(state.pos[key]=state.pos[key]||{})[n.id]={x:n.x,y:n.y};
+    }
+    return;
+  }
+  state.hover=hit(e);cv.style.cursor=state.hover?"pointer":"default";
+});
+cv.addEventListener("pointerup",e=>{const was=drag;drag=null;if(was&&was.moved)return;state.sel=hit(e);refresh();});
+cv.addEventListener("pointerleave",()=>{if(!drag)state.hover=null;});
+cv.addEventListener("dblclick",e=>{const id=hit(e),n=id&&V.byId.get(id);if(n&&n.type==="base"&&n.db!==state.db)openBase(n.db);});
+
+/* Lecture de la semaine et filtres */
+let timer=null;
+const playBtn=$("play");
+function stop(){if(timer){clearInterval(timer);timer=null;}state.playing=false;playBtn.setAttribute("aria-pressed","false");playBtn.textContent="Rejouer la semaine";}
+playBtn.addEventListener("click",()=>{
+  if(state.playing){stop();return;}
+  state.playing=true;playBtn.setAttribute("aria-pressed","true");playBtn.textContent="Mettre en pause";
+  timer=setInterval(()=>{state.slot=(state.slot+1)%168;refresh();},700);
+});
+document.querySelectorAll(".mode").forEach(b=>b.addEventListener("click",()=>{
+  state.mode=b.dataset.mode;
+  document.querySelectorAll(".mode").forEach(o=>o.setAttribute("aria-pressed",String(o===b)));
+  refresh();
+}));
+
+syncCfgUi();resize();
+setData(CF.demo(),"Jeu de démonstration",true);
+window.addEventListener("resize",resize);
+if(window.ResizeObserver)new ResizeObserver(resize).observe(cv);
+requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

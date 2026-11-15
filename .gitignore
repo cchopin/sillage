@@ -1,3 +1,8 @@
+# Extractions réelles : noms de bases, tables, logins, extraits de requêtes.
+# Elles ne doivent jamais être commitées. Seuls les jeux fictifs d'exemples/ sont suivis.
+*.json
+!exemples/*.json
+
 .DS_Store
 .launcher.json
 node_modules/
