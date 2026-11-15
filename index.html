@@ -3,9 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Carte des flux SQL Server</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<title>Sillage · la carte des flux du Query Store</title>
 <style>
 /* Salle de supervision : carte au centre, panneau de détail et réglages à droite, frise horaire en bas. Thème sombre unique, assumé. */
 :root{
@@ -32,6 +30,7 @@ button,label.btn{cursor:pointer}
 
 header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:10px 16px;border-bottom:1px solid var(--line)}
 h1{font-size:17px;font-weight:600;margin:0;text-wrap:balance}
+h1 small{font-size:12px;font-weight:400;color:var(--muted);margin-left:6px}
 .sub{color:var(--muted);font-family:var(--mono);font-size:12px}
 .chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted)}
 .chip.demo{border-color:var(--write);color:var(--write)}
@@ -108,7 +107,7 @@ footer{border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex
 <body>
 <header>
   <div>
-    <h1>Carte des flux SQL Server</h1>
+    <h1>Sillage <small>la carte des flux du Query Store</small></h1>
     <div class="sub" id="sub"></div>
   </div>
   <span class="chip" id="chip"></span>
@@ -207,15 +206,24 @@ function prepare(raw){
   });
   (raw.horaire||[]).forEach(function(x){getQ(x.db,+x.q).h.set(+x.s,x);});
 
+  /* Les dates de l'extraction sont en heure locale du serveur, sans fuseau : elles sont lues comme des heures murales. */
+  function wall(x){return x?Date.parse(/(Z|[+-]\d\d:?\d\d)$/i.test(x)?x:x+"Z"):NaN;}
   var min=Infinity,max=-Infinity;
   D.bases.forEach(function(b){
-    var a=Date.parse(b.debut),z=Date.parse(b.fin);
+    var a=wall(b.debut),z=wall(b.fin);
     if(!isNaN(a))min=Math.min(min,a);
     if(!isNaN(z))max=Math.max(max,z);
+    /* Nombre de fois où chaque créneau jour x heure tombe dans la période couverte par cette base. */
+    if(!isNaN(a)&&!isNaN(z)&&z>=a&&z-a<864e5*3660){
+      b.occ=new Float64Array(168);
+      for(var t=Math.floor(a/36e5)*36e5;t<=z;t+=36e5){var dt=new Date(t);b.occ[((dt.getUTCDay()+6)%7)*24+dt.getUTCHours()]++;}
+    }
   });
   var days=isFinite(min)&&isFinite(max)?(max-min)/864e5+1/24:(+D.meta.jours||7);
   D.days=Math.max(1,Math.round(days));
   D.weeks=Math.max(1,days/7);
+  /* Diviseur d'un cumul pour obtenir une moyenne par heure : occurrences du créneau, à défaut nombre de semaines. */
+  D.occ=function(db,s){var b=D.bases.get(db);return b&&b.occ?Math.max(1,b.occ[s]):D.weeks;};
 
   D.queries.forEach(function(o){
     if(!D.bases.has(o.db))D.bases.set(o.db,{db:o.db,mo:0,known:false});
@@ -242,7 +250,7 @@ function prepare(raw){
 
 /* db = null pour la vue instance (un noeud par base), sinon le nom de la base ouverte (un noeud par table). */
 function view(D,cfg,db){
-  var excl=new Set(cfg.exclues||[]),m=cfg.metric,K=METRICS[m].k/D.weeks;
+  var excl=new Set(cfg.exclues||[]),m=cfg.metric,K=METRICS[m].k;
   function baseOk(b){var B=D.bases.get(b);return !excl.has(b)&&!(B&&B.known&&B.mo<cfg.minMo);}
   function mapN(key){
     if(key===APPS)return APPS;
@@ -279,7 +287,7 @@ function view(D,cfg,db){
     });
   });
   edges.forEach(function(e){
-    e.qs.forEach(function(q){q.h.forEach(function(x,s){e.v[s]+=(+x[m]||0)*K;});});
+    e.qs.forEach(function(q){q.h.forEach(function(x,s){e.v[s]+=(+x[m]||0)*K/D.occ(q.db,s);});});
     for(var s=0;s<168;s++)e.tot+=e.v[s];
     node(e.s).vol+=e.tot;node(e.d).vol+=e.tot;
   });
@@ -292,10 +300,10 @@ function view(D,cfg,db){
     var ids=new Set();
     (q.writes.length?q.writes:q.reads).forEach(function(k){var id=mapN(k);if(id&&nodes.has(id))ids.add(id);});
     q.h.forEach(function(x,s){
-      var v=(+x[m]||0)*K;
+      var n=D.occ(q.db,s),v=(+x[m]||0)*K/n;
       if(q.kind==="R")totR[s]+=v;else totW[s]+=v;
-      exec[s]+=(+x.e||0)/D.weeks;
-      if(x.lk)ids.forEach(function(id){nodes.get(id).lk[s]+=x.lk/1000/D.weeks;});
+      exec[s]+=(+x.e||0)/n;
+      if(x.lk)ids.forEach(function(id){nodes.get(id).lk[s]+=x.lk/1000/n;});
     });
   });
   var vmax=0;
@@ -444,9 +452,8 @@ const hot=n=>n.lk[state.slot]>=cfg.lockS&&n.lk[state.slot]>0;
 function setData(raw,label,isDemo){
   D=CF.prepare(raw);
   state.db=null;state.sel=null;state.pos={};
-  cfg.exclues=cfg.exclues.filter(b=>D.bases.has(b));
   const m=D.meta;
-  $("sub").textContent=[m.serveur,m.version?"SQL Server "+m.version:null,"moyenne sur "+D.days+" jours"].filter(Boolean).join(" · ");
+  $("sub").textContent=[m.serveur,m.version?"SQL Server "+m.version:null,"moyenne sur "+D.days+(D.days>1?" jours":" jour")].filter(Boolean).join(" · ");
   $("chip").textContent=label;$("chip").classList.toggle("demo",!!isDemo);
   buildBaseList();rebuild(true);
 }
@@ -596,7 +603,7 @@ function queryItem(q,v,max){
 }
 function paintPanel(){
   panel.textContent="";
-  const s=state.slot,K=CF.METRICS[cfg.metric].k/D.weeks;
+  const s=state.slot,K=CF.METRICS[cfg.metric].k;
   const when=DAYS_LONG[Math.floor(s/24)]+", de "+(s%24)+" h à "+(s%24+1)+" h";
   if(!state.sel){
     panel.appendChild(el("h2",null,"Flux les plus actifs"));
@@ -636,7 +643,7 @@ function paintPanel(){
     sessionList(Array.from(m.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8),"Logins connectés à l'extraction");
   }
   const qs=new Map();
-  shown.forEach(o=>o.e.qs.forEach(q=>{const x=q.h.get(s);const v=x?(+x[cfg.metric]||0)*K:0;if(v>0)qs.set(q,v);}));
+  shown.forEach(o=>o.e.qs.forEach(q=>{const x=q.h.get(s);const v=x?(+x[cfg.metric]||0)*K/D.occ(q.db,s):0;if(v>0)qs.set(q,v);}));
   const tq=Array.from(qs.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8);
   if(tq.length){
     panel.appendChild(el("h3",null,"Requêtes principales"));
@@ -673,7 +680,7 @@ function paintKpis(){
   $("kRead").textContent=fmt(V.totR[s]);$("kWrite").textContent=fmt(V.totW[s]);$("kExec").textContent=fmt(V.exec[s]);
   $("kLck").textContent=V.nodes.filter(hot).length;
   const now=$("now");now.textContent=DAYS_LONG[Math.floor(s/24)]+" "+String(s%24).padStart(2,"0")+":00";
-  now.appendChild(el("small",null,"moyenne horaire sur "+D.days+" jours"));
+  now.appendChild(el("small",null,"moyenne horaire sur "+D.days+(D.days>1?" jours":" jour")));
 }
 function refresh(){paintKpis();paintHeat();paintPanel();}
 
@@ -743,15 +750,15 @@ function draw(ts){
       ctx.beginPath();ctx.arc(p.x,p.y,r+4+3*k,0,6.283);ctx.strokeStyle=C.alert;ctx.lineWidth=2.5;
       ctx.globalAlpha=(on?1:.3)*(.55+.45*k);ctx.stroke();ctx.globalAlpha=on?1:.3;
     }
-    ctx.fillStyle=C.text;ctx.font="500 "+(12.5*S)+"px 'IBM Plex Sans',sans-serif";
+    ctx.fillStyle=C.text;ctx.font="500 "+(12.5*S)+"px 'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif";
     ctx.fillText(short(n.name),p.x,p.y+r+15*S);
     if(n.type!=="apps"&&!n.pseudo){
-      ctx.fillStyle=C.muted;ctx.font=(10.5*S)+"px 'IBM Plex Mono',monospace";
+      ctx.fillStyle=C.muted;ctx.font=(10.5*S)+"px 'IBM Plex Mono',ui-monospace,Consolas,monospace";
       ctx.fillText(n.type==="client"?n.sessions+" sessions":n.type==="table"&&n.lignes?fmt(n.lignes)+" lignes":fmtSize(n.mo),p.x,p.y+r+28*S);
     }
     ctx.globalAlpha=1;
   });
-  if(!V.edges.length){ctx.fillStyle=C.muted;ctx.font=(14*S)+"px 'IBM Plex Sans',sans-serif";ctx.fillText("Aucun flux à afficher avec ces réglages.",W/2,H/2);}
+  if(!V.edges.length){ctx.fillStyle=C.muted;ctx.font=(14*S)+"px 'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif";ctx.fillText("Aucun flux à afficher avec ces réglages.",W/2,H/2);}
 }
 function hit(e){
   const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;let best=null;

@@ -8,8 +8,21 @@ Une carte interactive des flux de données d'une instance SQL Server, construite
 
 ## État du projet
 
-- **Front (`index.html`)** : vérifié sur le jeu de démonstration uniquement (contrôle de syntaxe des scripts, ouverture de la page et affichage de la carte de démonstration).
-- **Extraction (`sql/extraction-query-store.sql`) et lanceur (`scripts/extraire.ps1`)** : pas encore exécutés sur une instance SQL Server réelle. Ils n'ont été que relus. Les retours d'exécution, y compris les erreurs, sont bienvenus.
+Ce qui a été vérifié, et dans quelles limites :
+
+- **Chaîne complète** : exécutée de bout en bout sur une seule instance de test, SQL Server 2022 (16.0, CU28) sous Linux dans un conteneur, avec trois petites bases fictives et quelques dizaines d'exécutions. Le lanceur a produit le fichier, la page l'a lu et a affiché la carte attendue : flux entre bases, procédure appelante, attente de verrou, sessions ouvertes.
+- **Extraction (`sql/extraction-query-store.sql`)** : sur cette instance, essayée aussi par `sqlcmd`, avec `@Bases`, `@TopRequetes = 1`, `@TexteMax` à 0 et au-delà de 4000, et avec les deux replis du fuseau horaire.
+- **Lanceur (`scripts/extraire.ps1`)** : essayé sous PowerShell 7 sur macOS, en authentification SQL.
+- **Front (`index.html`)** : vérifié sur le jeu de démonstration et sur le fichier de cette instance de test.
+
+Ce qui n'a pas été vérifié :
+
+- SQL Server 2016, 2017 et 2019, Azure SQL, et SQL Server sous Windows ;
+- une instance de production : volumétrie réelle, durée de l'extraction, plans complexes, nombreuses bases, groupes de disponibilité ;
+- un historique de plusieurs jours, et donc un changement d'heure dans la période ;
+- Windows PowerShell 5.1 et l'authentification Windows.
+
+Les retours d'exécution, y compris les erreurs, sont bienvenus.
 
 ## Contenu du kit
 
@@ -24,6 +37,7 @@ Une carte interactive des flux de données d'une instance SQL Server, construite
 
 - SQL Server 2016 ou plus récent, Query Store activé sur les bases à cartographier.
 - Droits `VIEW SERVER STATE` et `VIEW DATABASE STATE` (ou sysadmin).
+- Pour le lanceur : Windows PowerShell 5.1 ou PowerShell 7, sans module à installer.
 - Les attentes de verrou ne sont disponibles qu'à partir de SQL Server 2017.
 - Un intervalle Query Store de 60 minutes ou moins. Au-delà, la répartition par heure est approximative et le front le signale.
 
@@ -44,7 +58,7 @@ Avec une authentification SQL :
 2. Ouvrir `index.html` dans un navigateur (ou la démo en ligne).
 3. Cliquer sur « Charger un fichier JSON », ou glisser `flux.json` sur la carte.
 
-Sans PowerShell, le script SQL s'exécute tel quel dans SSMS ou Azure Data Studio : il renvoie une seule cellule à copier dans un fichier `.json`. SSMS tronque les longues cellules, Azure Data Studio est plus fiable pour cette copie.
+Sans PowerShell, le script SQL s'exécute tel quel dans SSMS ou Azure Data Studio : il renvoie une seule cellule à copier dans un fichier `.json`. SSMS tronque les longues cellules, Azure Data Studio est plus fiable pour cette copie. Avec `sqlcmd`, ajouter `-y 0` pour que la cellule ne soit pas tronquée.
 
 ## Réglages de l'extraction
 
@@ -57,7 +71,7 @@ En tête de `sql/extraction-query-store.sql` :
 | `@TopTables` | 200 | Tables décrites par base, les plus volumineuses |
 | `@TexteMax` | 300 | Longueur du texte de requête exporté, 0 pour ne rien exporter |
 | `@TailleMinMo` | 0 | Ignore les bases plus petites que ce seuil |
-| `@Bases` | vide | Liste de bases séparées par des virgules, vide pour toutes |
+| `@Bases` | vide | Liste de bases séparées par des virgules, vide pour toutes. Les espaces autour des virgules sont ignorés |
 
 ## Réglages du front
 
@@ -79,7 +93,8 @@ Les réglages sont mémorisés dans le navigateur. Les noeuds se déplacent à l
 - Une requête en lecture seule crée un flux de chaque table lue vers « Applications ».
 - Une requête d'écriture crée un flux de chaque table lue vers la table écrite. Sans table source, le flux part de « Applications ».
 - Une requête stockée dans la base A qui touche une table de la base B crée un flux entre bases.
-- Les volumes sont des moyennes par heure, pour chaque créneau jour de semaine et heure, en heure locale du serveur.
+- Les volumes sont des moyennes par heure, pour chaque créneau jour de semaine et heure, en heure locale du serveur. Le cumul de chaque créneau est divisé par le nombre de fois où ce créneau tombe dans la période extraite : une période de dix jours compte deux lundis et un seul jeudi.
+- L'heure locale tient compte des changements d'heure quand le fuseau du serveur peut être déterminé (`CURRENT_TIMEZONE_ID()` à partir de SQL Server 2022, lecture du registre Windows avant). Sinon, le décalage en vigueur au moment de l'extraction est appliqué à tout l'historique. Le champ `meta.fuseau` du JSON indique le cas retenu.
 
 ## Limites à connaître
 
@@ -89,19 +104,20 @@ Les réglages sont mémorisés dans le navigateur. Les noeuds se déplacent à l
 - Les tables temporaires et les objets système sont ignorés.
 - Les plans trop profonds pour être convertis en XML sont rattachés au noeud « (autres) » de leur base.
 - Les requêtes hors sélection sont regroupées sous « (autres) », comptées en lecture.
+- Le Query Store enregistre aussi les requêtes de l'extraction. Elles portent la marque `/*sillage*/` et sont écartées de la carte.
 - Sur une base secondaire d'un groupe de disponibilité, le Query Store reflète l'activité du primaire, sauf si le Query Store pour réplicas secondaires est activé (SQL Server 2022).
 
 ## Confidentialité
 
 Une extraction réelle ne doit jamais être commitée : le `.gitignore` exclut tous les fichiers `*.json` sauf ceux du dossier `exemples/`.
 
-Le fichier JSON contient des noms de bases, de tables, de procédures et de logins, ainsi que des extraits de texte de requêtes qui peuvent inclure des valeurs littérales. Mettre `@TexteMax` à 0 avant de partager un fichier hors de l'équipe. La page HTML ne transmet rien : le fichier est lu localement par le navigateur.
+Le fichier JSON contient des noms de bases, de tables, de procédures et de logins, ainsi que des extraits de texte de requêtes qui peuvent inclure des valeurs littérales. Mettre `@TexteMax` à 0 avant de partager un fichier hors de l'équipe. La page HTML ne transmet rien et ne charge aucune ressource externe : le fichier est lu localement par le navigateur, et la page fonctionne hors ligne.
 
 ## Format du JSON
 
 ```json
 {
-  "meta":     { "serveur": "", "version": "", "extrait_le": "", "jours": 7, "top_requetes": 60 },
+  "meta":     { "serveur": "", "version": "", "extrait_le": "", "jours": 7, "top_requetes": 60, "fuseau": "" },
   "bases":    [ { "db": "", "mo": 0, "data_mo": 0, "log_mo": 0, "qs_min": 60, "qs_etat": "", "debut": "", "fin": "", "erreur": "" } ],
   "tables":   [ { "db": "", "t": "schema.table", "lignes": 0, "mo": 0 } ],
   "requetes": [ { "db": "", "q": 0, "txt": "", "obj": "schema.procedure" } ],
@@ -111,7 +127,7 @@ Le fichier JSON contient des noms de bases, de tables, de procédures et de logi
 }
 ```
 
-Dans `horaire`, `s` est le créneau (0 pour lundi 0 h, 167 pour dimanche 23 h). Les autres champs sont des cumuls sur la période : `e` exécutions, `r` lignes, `c` CPU en ms, `d` durée en ms, `lr` et `lw` lectures et écritures logiques en pages, `lk` attente de verrou en ms. `q` vaut 0 pour le regroupement des requêtes hors sélection. Dans `objets`, `w` vaut 1 pour une table écrite. `clients` est facultatif : une ligne par base et par login, avec le nombre de sessions ouvertes à l'extraction.
+Dans `horaire`, `s` est le créneau (0 pour lundi 0 h, 167 pour dimanche 23 h). Les autres champs sont des cumuls sur la période : `e` exécutions, `r` lignes, `c` CPU en ms, `d` durée en ms, `lr` et `lw` lectures et écritures logiques en pages, `lk` attente de verrou en ms. `q` vaut 0 pour le regroupement des requêtes hors sélection. Dans `objets`, `w` vaut 1 pour une table écrite. `clients` et `meta.fuseau` sont facultatifs. `clients` contient une ligne par base et par login, avec le nombre de sessions ouvertes à l'extraction.
 
 ## Licence
 

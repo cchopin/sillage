@@ -13,16 +13,32 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$auth = "Integrated Security=True"
+# Le client SQL historique est fourni avec Windows PowerShell 5.1 et avec PowerShell 7.
+if (-not ("System.Data.SqlClient.SqlConnection" -as [type])) {
+    try { Add-Type -AssemblyName "System.Data.SqlClient" } catch { }
+}
+if (-not ("System.Data.SqlClient.SqlConnection" -as [type])) {
+    throw "Client SQL introuvable dans cette version de PowerShell. Utiliser Windows PowerShell 5.1, ou exécuter le script SQL dans SSMS ou Azure Data Studio."
+}
+if (-not (Test-Path -LiteralPath $Script)) { throw "Script SQL introuvable : $Script" }
+
+$sql = Get-Content -Raw -Encoding UTF8 -LiteralPath $Script
+
+# La chaîne de connexion est construite champ par champ, et le mot de passe n'y figure jamais :
+# un nom de serveur ou un mot de passe contenant ";" ou "=" ne peut pas la casser.
+$cs = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+$cs["Data Source"] = $Serveur
+$cs["Initial Catalog"] = "master"
+$cs["Application Name"] = "Sillage"
+$cs["TrustServerCertificate"] = $true
+if ($Utilisateur -eq "") { $cs["Integrated Security"] = $true }
+
+$cn = New-Object System.Data.SqlClient.SqlConnection($cs.ConnectionString)
 if ($Utilisateur -ne "") {
     $secret = Read-Host -AsSecureString "Mot de passe de $Utilisateur"
-    $clair = [System.Net.NetworkCredential]::new("", $secret).Password
-    $auth = "User ID=$Utilisateur;Password=$clair"
+    $secret.MakeReadOnly()
+    $cn.Credential = New-Object System.Data.SqlClient.SqlCredential($Utilisateur, $secret)
 }
-
-$sql = Get-Content -Raw -Encoding UTF8 -Path $Script
-$chaine = "Server=$Serveur;Database=master;$auth;Application Name=CarteFlux;TrustServerCertificate=True"
-$cn = New-Object System.Data.SqlClient.SqlConnection($chaine)
 $cn.Open()
 try {
     $cmd = $cn.CreateCommand()
@@ -38,5 +54,6 @@ if ([string]::IsNullOrEmpty($json)) { throw "L'extraction n'a renvoyé aucun doc
 
 $chemin = $Sortie
 if (-not [System.IO.Path]::IsPathRooted($chemin)) { $chemin = Join-Path (Get-Location) $chemin }
-[System.IO.File]::WriteAllText($chemin, $json, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host ("Fichier écrit : {0} ({1:N0} Ko)" -f $chemin, ($json.Length / 1024))
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($chemin, $json, $utf8)
+Write-Host ("Fichier écrit : {0} ({1:N0} Ko)" -f $chemin, ($utf8.GetByteCount($json) / 1024))
